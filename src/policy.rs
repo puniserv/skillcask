@@ -8,7 +8,7 @@ use jiff::SignedDuration;
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::bail;
-use crate::error::{Error, MANIFEST, Result};
+use crate::error::{Context, Error, MANIFEST, Result};
 
 pub const CONFIG: &str = "config.toml";
 pub const REPOSITORY_AGES: &str = "repository-min-release-age";
@@ -179,12 +179,12 @@ pub fn outer() -> Result<Outer> {
 }
 
 fn read_config(path: &Path) -> Result<(Layer, Option<Vec<String>>, String)> {
+    let shown = path.display().to_string();
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Layer::default(), None, String::new())),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e).ctx(&shown),
     };
-    let shown = path.display().to_string();
     let doc: DocumentMut = text.parse().map_err(|e| Error::new(MANIFEST, format!("{shown}: {e}")))?;
     if let Some((k, _)) = doc.iter().find(|(k, _)| !matches!(*k, "policy" | "agents")) {
         bail!(MANIFEST, "{shown}: only [policy] and [agents] are read here, found {k}");
