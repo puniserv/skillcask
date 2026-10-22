@@ -607,7 +607,8 @@ impl Ctx {
                 project::place(s, &sk.name, &f.dir.path().join(&sk.path))?;
                 if let Some(md) = skill_md {
                     // Truncates in place, so the copied mode stays.
-                    std::fs::write(project::store_dir(s, &sk.name).join(skill::SKILL_MD), md)?;
+                    let shown = s.show(&format!("{STORE}/{}/{}", sk.name, skill::SKILL_MD));
+                    std::fs::write(project::store_dir(s, &sk.name).join(skill::SKILL_MD), md).ctx(shown)?;
                 }
                 set_modes(&mut modes, &sk.name, &files);
                 crate::ui::done("installed", format!("{} ({} {})", sk.name, p.name, p.version));
@@ -625,9 +626,9 @@ impl Ctx {
             }
             let dir = project::store_dir(s, n);
             if dir.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
-                std::fs::remove_file(&dir)?;
+                std::fs::remove_file(&dir).ctx(s.show(&format!("{STORE}/{n}")))?;
             } else if dir.is_dir() {
-                std::fs::remove_dir_all(dir)?;
+                std::fs::remove_dir_all(dir).ctx(s.show(&format!("{STORE}/{n}")))?;
             }
             crate::ui::done("removed", n);
         }
@@ -1104,9 +1105,7 @@ fn settle_deps(
             let current = lock.get(&req.name).cloned();
             let p = match ctx.relock(m, req, current.as_ref(), prepared)? {
                 Some(p) => p,
-                None => ctx
-                    .resolve(m, req, current.as_ref(), prepared)
-                    .map_err(|e| Error::new(e.code, format!("{}{}", e.msg, required_by(&w, &req.name))))?,
+                None => ctx.resolve(m, req, current.as_ref(), prepared).map_err(|e| e.map_msg(|m| m + &required_by(&w, &req.name)))?,
             };
             if current.is_none() && m.skill(&req.name).is_none() {
                 let by: Vec<&str> = w.by.get(&req.name).into_iter().flatten().map(|(r, _)| r.as_str()).collect();
@@ -1217,8 +1216,8 @@ pub fn init(ctx: &Ctx) -> Result<()> {
     if path.exists() {
         bail!(MANIFEST, "{shown} already exists");
     }
-    std::fs::create_dir_all(&ctx.s.config)?;
-    std::fs::write(&path, manifest::template(ctx.s.global))?;
+    std::fs::create_dir_all(&ctx.s.config).ctx(ctx.s.config.display())?;
+    std::fs::write(&path, manifest::template(ctx.s.global)).ctx(&shown)?;
     crate::ui::done("created", &shown);
     Ok(())
 }

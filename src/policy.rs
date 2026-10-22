@@ -8,7 +8,7 @@ use jiff::SignedDuration;
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::bail;
-use crate::error::{Error, MANIFEST, Result};
+use crate::error::{Context, Error, MANIFEST, Result};
 
 pub const CONFIG: &str = "config.toml";
 pub const REPOSITORY_AGES: &str = "repository-min-release-age";
@@ -179,12 +179,12 @@ pub fn outer() -> Result<Outer> {
 }
 
 fn read_config(path: &Path) -> Result<(Layer, Option<Vec<String>>, String)> {
+    let shown = path.display().to_string();
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Layer::default(), None, String::new())),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e).ctx(&shown),
     };
-    let shown = path.display().to_string();
     let doc: DocumentMut = text.parse().map_err(|e| Error::new(MANIFEST, format!("{shown}: {e}")))?;
     if let Some((k, _)) = doc.iter().find(|(k, _)| !matches!(*k, "policy" | "agents")) {
         bail!(MANIFEST, "{shown}: only [policy] and [agents] are read here, found {k}");
@@ -338,5 +338,29 @@ mod tests {
         assert!(!under("https://git.example.com.evil/a", "https://git.example.com"));
         assert!(!under("https://api.github.com/repos/acmex/r", "https://api.github.com/repos/acme"));
         assert!(under("https://api.github.com/repos/acme/r", "https://api.github.com/repos/acme"));
+    }
+
+    #[test]
+    fn source_entries_value_types_and_unreadable_config() {
+        let project = |t: &str| {
+            let doc: DocumentMut = t.parse().unwrap();
+            layer(doc.get("policy").and_then(Item::as_table_like), "skills.toml", false)
+        };
+        // Neither file takes an empty entry, a bare scheme, a plain-http URL or a name with a space.
+        for bad in ["", "https://", "http://example.com", "a b"] {
+            let t = format!("[policy]\nallow-sources = [{bad:?}]");
+            assert!(project(&t).is_err(), "{bad:?}");
+            assert!(cfg(&t).unwrap_err().msg.contains("is not packagist"), "{bad:?}");
+        }
+        assert!(project("[policy]\nallow-sources = [\"https://h\", \"acme\"]").is_ok());
+        assert!(cfg("[policy]\nmin-release-age = true").unwrap_err().msg.contains("must be a string"));
+        assert!(cfg("[policy]\nallow-sources = true").unwrap_err().msg.contains("must be a list"));
+        for (s, b) in [("true", true), ("false", false)] {
+            let l = env_layer(|k| (k == "SKILLCASK_ALLOW_RANGES").then(|| s.to_string())).unwrap();
+            assert_eq!(l.values["allow-ranges"], Value::Bool(b), "{s}");
+        }
+        // Only a missing config is an empty layer; one that exists but cannot be read is an error.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_config(dir.path()).is_err());
     }
 }

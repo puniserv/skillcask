@@ -6,7 +6,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::bail;
-use crate::error::{IO, Result};
+use crate::error::{Context, IO, Result};
 
 pub const SKILL_MD: &str = "SKILL.md";
 
@@ -335,26 +335,27 @@ pub fn scan_dir(dir: &Path) -> Result<Vec<FileEntry>> {
 /// and a relative symlink to a file inside the skill is a copy of that file, as at install.
 pub fn scan_publish(dir: &Path) -> Result<Vec<FileEntry>> {
     let mut out = Vec::new();
-    scan(dir, "", Some(&dir.canonicalize()?), &mut out)?;
+    scan(dir, "", Some(&dir.canonicalize().ctx(dir.display())?), &mut out)?;
     Ok(out)
 }
 
 fn scan(dir: &Path, prefix: &str, publish_root: Option<&Path>, out: &mut Vec<FileEntry>) -> Result<()> {
     let mut any = false;
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(dir).ctx(dir.display())? {
+        let entry = entry.ctx(dir.display())?;
         any = true;
         let name = entry.file_name().into_string().map_err(|n| crate::error::Error::new(IO, format!("non-UTF-8 file name {n:?}")))?;
         if publish_root.is_some() && name.starts_with('.') {
             continue;
         }
         let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
-        let meta = entry.path().symlink_metadata()?;
+        let meta = entry.path().symlink_metadata().ctx(format!("{rel:?}"))?;
         let ft = meta.file_type();
         if ft.is_dir() {
             scan(&entry.path(), &rel, publish_root, out)?;
         } else if ft.is_file() {
-            out.push(FileEntry::new(rel, is_exec(&meta), &std::fs::read(entry.path())?));
+            let bytes = std::fs::read(entry.path()).ctx(format!("{rel:?}"))?;
+            out.push(FileEntry::new(rel, is_exec(&meta), &bytes));
         } else if let Some(root) = publish_root.filter(|_| ft.is_symlink()) {
             let target = std::fs::canonicalize(entry.path())
                 .ok()
@@ -362,7 +363,9 @@ fn scan(dir: &Path, prefix: &str, publish_root: Option<&Path>, out: &mut Vec<Fil
             let Some(target) = target else {
                 bail!(IO, "{rel:?}: a symlink in a skill must be relative and point to a file inside the skill");
             };
-            out.push(FileEntry::new(rel, is_exec(&target.metadata()?), &std::fs::read(&target)?));
+            let what = format!("{rel:?}");
+            let meta = target.metadata().ctx(&what)?;
+            out.push(FileEntry::new(rel, is_exec(&meta), &std::fs::read(&target).ctx(what)?));
         } else {
             bail!(IO, "{rel:?}: symlinks and special files are not allowed in a skill");
         }
@@ -401,12 +404,13 @@ mod tests {
 
     #[test]
     fn reads_requires() {
-        let t = "---\nname: mr\nrequires:\n  acme/review: ^1.0 # pinned\n\n  # comment\n  \"github:o/r/pr\": 'main'\n  github:o/x: \">=1, <2\"\ndescription: d\n---\n";
+        let t = "---\nname: mr\nrequires:\n  acme/review: ^1.0 # pinned\n\n  # comment\n  \"github:o/r/pr\": 'main'\n  github:o/x: \">=1, <2\"\n  acme/b: >=1, <2\ndescription: d\n---\n";
         let r = requires(t).unwrap();
-        assert_eq!(r.len(), 3, "{r:?}");
+        assert_eq!(r.len(), 4, "{r:?}");
         assert_eq!(r["acme/review"], "^1.0");
         assert_eq!(r["github:o/r/pr"], "main");
         assert_eq!(r["github:o/x"], ">=1, <2");
+        assert_eq!(r["acme/b"], ">=1, <2");
         assert!(requires("---\nname: a\n---\n").unwrap().is_empty());
         assert!(requires("---\nrequires:\n---\n").unwrap().is_empty());
         assert!(requires("# none").unwrap().is_empty());
@@ -438,6 +442,7 @@ mod tests {
         assert_eq!(rename_frontmatter("---\nname: one\nx: y\nname: two\n---\n", "b"), "---\nname: one\nx: y\nname: b\n---\n");
         assert_eq!(rename_frontmatter("---\nname: >\n  Multi Line\nx: y\n---\n", "b"), "---\nname: b\nx: y\n---\n");
         assert_eq!(rename_frontmatter("---\nname:\n  one\n---\n", "b"), "---\nname: b\n---\n");
+        assert_eq!(rename_frontmatter("---\nname: \"open\n\n---\n", "b"), "---\nname: b\n---\n", "an open quote runs to the closing ---");
         for t in ["---\nname : one\n---\n", "---\nname: one\nname: two\n---\n", "---\nname: |-\n  x\n---\n"] {
             assert_eq!(frontmatter(&rename_frontmatter(t, "b"))["name"], "b", "{t:?}");
         }
@@ -456,9 +461,13 @@ mod tests {
             assert_eq!(frontmatter(&r)["description"], "x name: innocent y");
         }
         let escaped = frontmatter("---\ndescription: \"a \\\" b\nname: c\"\nname: real\n---\n");
-        assert_eq!(escaped["name"], "real");
+        assert_eq!((escaped["name"].as_str(), escaped["description"].as_str()), ("real", "a \\\" b name: c"));
         let doubled = frontmatter("---\ndescription: 'it''s\nname: c'\nname: real\n---\n");
-        assert_eq!(doubled["name"], "real");
+        assert_eq!((doubled["name"].as_str(), doubled["description"].as_str()), ("real", "it''s name: c"));
+        // A quote still open at the closing `---` ends there: the other keys are read, it is not.
+        let open = frontmatter("---\nname: a\ndescription: \"open\n---\nname: body\n");
+        assert_eq!(open["name"], "a");
+        assert!(!open.contains_key("description"));
 
         let unclosed = "---\nname: a\ndescription: d\n";
         assert!(frontmatter(unclosed).is_empty());
@@ -542,7 +551,35 @@ mod tests {
             assert!(scan_dir(dir.path()).is_err());
             std::fs::remove_file(dir.path().join("l")).unwrap();
         }
+        #[cfg(not(unix))]
+        assert!(scan_dir(dir.path()).unwrap().iter().all(|e| !e.exec), "no exec bit without unix modes");
         std::fs::create_dir(dir.path().join("empty")).unwrap();
         assert!(scan_dir(dir.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_copies_a_relative_symlink_to_a_file_inside_the_skill_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("skill");
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        std::fs::write(dir.join("SKILL.md"), b"s").unwrap();
+        std::fs::write(dir.join("d/f.md"), b"f").unwrap();
+        std::fs::write(tmp.path().join("outside.md"), b"o").unwrap();
+        let link = |target: &str| {
+            let _ = std::fs::remove_file(dir.join("l.md"));
+            std::os::unix::fs::symlink(target, dir.join("l.md")).unwrap();
+        };
+        link("d/f.md");
+        let mut got = scan_publish(&dir).unwrap();
+        got.sort_by(|a, b| a.path.cmp(&b.path));
+        let f = FileEntry::new(String::new(), false, b"f").sha256;
+        // (path, has f.md's content)
+        let seen: Vec<(&str, bool)> = got.iter().map(|e| (e.path.as_str(), e.sha256 == f)).collect();
+        assert_eq!(seen, [("SKILL.md", false), ("d/f.md", true), ("l.md", true)]);
+        for bad in ["../outside.md", "d", &dir.join("d/f.md").display().to_string()] {
+            link(bad);
+            assert!(scan_publish(&dir).unwrap_err().msg.contains("inside the skill"), "{bad}");
+        }
     }
 }
