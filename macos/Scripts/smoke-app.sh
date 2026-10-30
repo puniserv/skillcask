@@ -40,6 +40,13 @@ if defaults domains | tr ',' '\n' | sed 's/^ *//' | grep -qx "$domain"; then
     had_domain=1
     defaults export "$domain" "$tmp/defaults.plist"
 fi
+# Step 2b makes the app discard its saved window state: kept aside and put back afterwards.
+saved_state="$HOME/Library/Saved Application State/$domain.savedState"
+had_saved_state=0
+if [ -d "$saved_state" ]; then
+    had_saved_state=1
+    ditto "$saved_state" "$tmp/saved-state"
+fi
 failures=0
 
 fail() {
@@ -70,6 +77,10 @@ cleanup() {
         defaults import "$domain" "$tmp/defaults.plist" || echo "smoke: could not restore $domain" >&2
     else
         defaults delete "$domain" >/dev/null 2>&1 || true
+    fi
+    if [ "$had_saved_state" = 1 ]; then
+        rm -rf "$saved_state"
+        ditto "$tmp/saved-state" "$saved_state" || echo "smoke: could not restore $saved_state" >&2
     fi
     rm -rf "$tmp"
 }
@@ -180,6 +191,9 @@ if kill -0 "$pid" 2>/dev/null; then
     elif printf '%s' "$layout" | grep -q ', 613.000000, '; then
         # The list kept the saved width: the layout was restored (AppKit may move the columns apart itself).
         fail "the overlapping saved layout was restored: $layout"
+    elif [ -n "$layout" ] && ! printf '%s' "$layout" | grep -q '"0.000000, 0.000000, 220.000000, '; then
+        # Dropped, the key is gone or saved again with the sidebar at its ideal 220.
+        fail "the saved layout is neither gone nor laid out from the ideal widths: $layout"
     else
         ok "an overlapping saved layout is dropped; 1 on-screen window${layout:+, layout now: $layout}"
     fi

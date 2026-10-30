@@ -51,7 +51,13 @@ import Testing
             "0.000000, 0.000000, 415.000000, 726.000000, NO, YES",
             "181.000000, 0.000000, 672.000000, 726.000000, NO, NO",
         ]
+        let sidebarCollapsedKeepingItsWidth = [
+            "0.000000, 0.000000, 228.000000, 726.000000, YES, NO",
+            "0.000000, 0.000000, 415.000000, 726.000000, NO, NO",
+            "416.000000, 0.000000, 672.000000, 726.000000, NO, NO",
+        ]
         #expect(SplitViewFrames.unsoundKeys([Self.key: sidebarCollapsed]).isEmpty)
+        #expect(SplitViewFrames.unsoundKeys([Self.key: sidebarCollapsedKeepingItsWidth]).isEmpty)
         #expect(SplitViewFrames.unsoundKeys([Self.key: listHidden]).isEmpty)
     }
 
@@ -70,12 +76,22 @@ import Testing
         #expect(SplitViewFrames.unsoundKeys([Self.key: frames]).isEmpty)
     }
 
+    @Test func columnsOverlappingByAPointAreDropped() {
+        let frames = [
+            "0.000000, 0.000000, 180.000000, 726.000000, NO, NO",
+            "179.000000, 0.000000, 415.000000, 726.000000, NO, NO",
+        ]
+        #expect(SplitViewFrames.unsoundKeys([Self.key: frames]) == [Self.key])
+    }
+
     @Test func aLayoutThatDoesNotParseIsDropped() {
         let cases: [Any] = [
             "0, 0, 180, 726, NO, NO",
             ["0.000000, 0.000000, 180.000000, 726.000000, NO"],
             ["0.000000, 0.000000, wide, 726.000000, NO, NO"],
             ["0.000000, 0.000000, -1.000000, 726.000000, NO, NO"],
+            ["0.000000, 0.000000, 180.000000, -1.000000, NO, NO"],
+            ["0.000000, 0.000000, 180.000000, 726.000000, NO, NO, NO"],
             ["0.000000, 0.000000, 180.000000, 726.000000, MAYBE, NO"],
             ["0.000000, 0.000000, inf, 726.000000, NO, NO"],
             [1, 2, 3],
@@ -114,6 +130,11 @@ import Testing
         #expect(defaults.object(forKey: Self.key) == nil)
         #expect(defaults.object(forKey: second) != nil)
         #expect(defaults.string(forKey: "lastScope") == "personal")
+        #expect(SplitViewFrames.repair(defaults).isEmpty)
+    }
+
+    @Test func aLayoutTheAppCannotRemoveIsNotReported() {
+        let defaults = MemoryDefaults.make(readOnly: [Self.key: Self.overlapping])
         #expect(SplitViewFrames.repair(defaults).isEmpty)
     }
 }

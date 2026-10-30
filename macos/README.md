@@ -74,7 +74,7 @@ warnings in unchanged files, so trust a count of 0 only after `swift package cle
 the built app on the sample data, again over a saved column layout whose columns overlap (it must
 be dropped), and live (with a fresh `SKILLCASK_HOME` and a `PATH` without skillcask;
 `-appUpdates.consent declined`, so no update check), signals only the processes it started, and
-restores the app's defaults afterwards.
+restores the app's defaults and saved window state afterwards.
 
 ## Render the previews
 

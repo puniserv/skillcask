@@ -12,13 +12,15 @@ public enum SplitViewFrames {
     /// Columns that touch may differ by rounding.
     static let tolerance = 0.5
 
-    /// Removes the main window's unsound layouts from `defaults` and returns their keys, sorted.
+    /// Removes the main window's unsound layouts from `defaults` and returns the keys it removed, sorted. A layout
+    /// from a domain the app cannot write (the arguments, the global domain) is not reported, so the caller does not
+    /// discard the saved state on every launch for it.
     @discardableResult public static func repair(_ defaults: UserDefaults) -> [String] {
-        let keys = unsoundKeys(defaults.dictionaryRepresentation())
-        for key in keys {
-            defaults.removeObject(forKey: key)
-        }
-        return keys
+        unsoundKeys(defaults.dictionaryRepresentation())
+            .filter { key in
+                defaults.removeObject(forKey: key)
+                return defaults.object(forKey: key) == nil
+            }
     }
 
     /// After `repair` dropped a layout: removes the app's saved window state as well, which the report's fix also
