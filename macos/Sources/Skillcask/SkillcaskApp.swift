@@ -4,13 +4,18 @@ import SkillcaskUI
 import SwiftUI
 
 /// The entry point: refuses a CLI-style start (`LaunchArguments`), e.g. a `skillcask --version` probe that resolved
-/// to this binary, before any SwiftUI or store code runs; otherwise starts `SkillcaskApp`.
+/// to this binary, before any SwiftUI or store code runs; otherwise repairs the saved column layout and starts
+/// `SkillcaskApp`.
 @main
 enum Entry {
     static func main() {
         if LaunchArguments.isCLIInvocation(CommandLine.arguments.dropFirst()) {
             FileHandle.standardError.write(Data("Skillcask is the macOS app, not the skillcask CLI.\n".utf8))
             exit(LaunchArguments.refusalStatus)
+        }
+        // Before any window: a saved column layout that would open the window empty and hang it (`SplitViewFrames`).
+        if !SplitViewFrames.repair(.standard).isEmpty {
+            SplitViewFrames.discardSavedState()
         }
         SkillcaskApp.main()
     }
