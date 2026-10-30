@@ -6,6 +6,8 @@
 #    must still be alive after a few seconds with exactly one on-screen window: the resource bundle
 #    resolves inside the .app. It runs no CLI, so it is also the control for the access-time signal below
 #    (it runs first: the system's scan of a freshly built bundle on first launch reads the helper too).
+#    2b. The same start over a saved column layout whose columns overlap: the app drops it before the window
+#    opens and shows one window.
 # 3. Live start with a fresh SKILLCASK_HOME and a PATH without skillcask, so the bundled
 #    `Contents/Helpers/skillcask` is the only CLI it can use. For ~10 s the process started here stays
 #    alive, no other new process of this bundle's executable appears, and its children stay few. The
@@ -159,6 +161,36 @@ else
     control_moved=1
 fi
 stop
+
+# --- 2b. An overlapping saved column layout is dropped before the window opens (`SplitViewFrames`) -------
+# The layout from a report, as AppKit saves a sidebar collapsed at quit (the list at x 0 under it): on macOS 26 it
+# opened the window empty and hung it on a sidebar toggle. Fixture mode runs the same entry point and needs no CLI.
+layout_key="NSSplitView Subview Frames main-AppWindow-1, SidebarNavigationSplitView"
+defaults write "$domain" "$layout_key" -array \
+    "0.000000, 0.000000, 228.000000, 1852.000000, NO, NO" \
+    "0.000000, 0.000000, 613.000000, 1852.000000, NO, NO" \
+    "614.000000, 0.000000, 784.000000, 1852.000000, NO, NO"
+launch SKILLCASK_UI_FIXTURES=1
+sleep 4
+if kill -0 "$pid" 2>/dev/null; then
+    win=$(windows "$pid")
+    layout=$(defaults read "$domain" "$layout_key" 2>/dev/null | tr -d '\n' || true)
+    if [ "$win" != 1 ]; then
+        fail "with an overlapping saved layout the app shows $win on-screen windows, want 1"
+    elif printf '%s' "$layout" | grep -q ', 613.000000, '; then
+        # The list kept the saved width: the layout was restored (AppKit may move the columns apart itself).
+        fail "the overlapping saved layout was restored: $layout"
+    else
+        ok "an overlapping saved layout is dropped; 1 on-screen window${layout:+, layout now: $layout}"
+    fi
+else
+    status=0
+    wait "$pid" || status=$?
+    pid=
+    fail "with an overlapping saved layout the app exited $status; log: $(cat "$tmp/app.log")"
+fi
+stop
+defaults delete "$domain" "$layout_key" >/dev/null 2>&1 || true
 
 # --- 3. Live start: one process, one window, the bundled helper ------------------------------------
 mkdir -p "$tmp/home"
