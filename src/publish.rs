@@ -63,7 +63,7 @@ pub fn publish(args: &PublishArgs) -> Result<()> {
     let roots = if args.paths.is_empty() { vec![PathBuf::from(".")] } else { args.paths.clone() };
     let mut dirs = Vec::new();
     for r in &roots {
-        find(r, Some(&out), &mut dirs)?;
+        find(r, Some(&out), false, &mut dirs)?;
     }
 
     let mut found: BTreeMap<String, Vec<Found>> = BTreeMap::new();
@@ -305,9 +305,10 @@ pub fn validate(paths: &[PathBuf]) -> Result<()> {
     let mut dirs = Vec::new();
     for r in &roots {
         let before = dirs.len();
-        find(r, None, &mut dirs).ctx(shown(r))?;
+        find(r, None, true, &mut dirs).ctx(shown(r))?;
         if dirs.len() == before {
-            bail!(MANIFEST, "no {SKILL_MD} under {}", shown(r));
+            return Err(Error::new(MANIFEST, format!("no {SKILL_MD} under {}", shown(r)))
+                .hint("validate checks skill sources; for the skills installed here run `skillcask validate .agents/skills`"));
         }
     }
     let mut invalid = 0;
@@ -354,8 +355,10 @@ fn shown(p: &Path) -> String {
     if cfg!(windows) { s.replace('\\', "/") } else { s }
 }
 
-/// Skill directories under `dir`; `out` (the publish output) is not searched.
-fn find(dir: &Path, out: Option<&Path>, found: &mut Vec<PathBuf>) -> Result<()> {
+/// Skill directories under `dir`; `out` (the publish output) is not searched. With `links`, a
+/// symlinked child holding SKILL.md counts too (installed skills link into the store); links are
+/// never descended, so a link cycle cannot loop.
+fn find(dir: &Path, out: Option<&Path>, links: bool, found: &mut Vec<PathBuf>) -> Result<()> {
     if out.is_some_and(|out| dir.canonicalize().is_ok_and(|c| c == out)) {
         return Ok(());
     }
@@ -367,8 +370,11 @@ fn find(dir: &Path, out: Option<&Path>, found: &mut Vec<PathBuf>) -> Result<()> 
     for e in children {
         let name = e.file_name();
         let name = name.to_string_lossy();
-        if e.file_type().ctx(e.path().display())?.is_dir() && !name.starts_with('.') && name != "target" && name != "node_modules" {
-            find(&e.path(), out, found)?;
+        let kind = e.file_type().ctx(e.path().display())?;
+        if kind.is_dir() && !name.starts_with('.') && name != "target" && name != "node_modules" {
+            find(&e.path(), out, links, found)?;
+        } else if links && kind.is_symlink() && e.path().join(SKILL_MD).is_file() {
+            found.push(e.path());
         }
     }
     Ok(())

@@ -56,6 +56,20 @@ fn a_path_without_skills_fails() {
     p.write("empty/readme.md", "x");
     let out = p.expect(&["validate", "empty"], 1);
     assert!(out.contains("no SKILL.md under empty"), "{out}");
+    assert!(out.contains("skillcask validate .agents/skills"), "{out}");
+}
+
+#[cfg(unix)]
+#[test]
+fn installed_skills_linked_into_the_store_are_found() {
+    let s = Server::start();
+    let p = Project::new(&s);
+    p.write(".skills/alpha/SKILL.md", &md("alpha", ""));
+    std::fs::create_dir_all(p.path().join(".agents/skills")).unwrap();
+    std::os::unix::fs::symlink("../../.skills/alpha", p.path().join(".agents/skills/alpha")).unwrap();
+    std::os::unix::fs::symlink("..", p.path().join(".agents/skills/loop")).unwrap();
+    let out = p.ok(&["validate", ".agents/skills"]);
+    assert!(out.contains("checked 1 skill"), "{out}");
 }
 
 #[test]
